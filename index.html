@@ -20,13 +20,13 @@
 <body>
   <div class="container">
     <h1>Recruit-AI – Resume Screening Demo</h1>
-    <p>Upload a Job Description and a Resume to see the AI recruiter’s analysis.</p>
+    <p>Upload a Job Description and a Resume PDF to see the AI recruiter’s analysis.</p>
 
     <label><strong>Job Description</strong></label>
     <textarea id="jd" rows="6" placeholder="Paste the Job Description here..."></textarea>
 
-    <label><strong>Resume (paste text for POC)</strong></label>
-    <textarea id="resume" rows="6" placeholder="Paste the resume text here..."></textarea>
+    <label><strong>Resume (Upload PDF)</strong></label>
+    <input type="file" id="resumeFile" accept=".pdf" />
 
     <button id="analyzeBtn">Analyze Candidate</button>
     <p id="errorMsg" class="error" style="display:none;"></p>
@@ -36,12 +36,17 @@
       <p><strong>Match Score:</strong> <span class="badge" id="score"></span></p>
       <p><strong>Summary:</strong> <span id="summary"></span></p>
       <p><strong>Recommended Action:</strong> <span id="action"></span></p>
+      <p><strong>Reasons for Decision:</strong></p>
+      <ul id="reasons"></ul>
       <p><strong>Strengths:</strong></p>
       <ul id="strengths"></ul>
       <p><strong>Gaps:</strong></p>
       <ul id="gaps"></ul>
     </div>
   </div>
+
+  <!-- PDF.js Library -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 
   <script>
     const btn = document.getElementById('analyzeBtn');
@@ -50,10 +55,15 @@
 
     btn.addEventListener('click', async () => {
       const jd = document.getElementById('jd').value.trim();
-      const resume = document.getElementById('resume').value.trim();
+      const fileInput = document.getElementById('resumeFile');
+      const file = fileInput.files[0];
 
-      if (!jd || !resume) {
-        showError('Please provide both Job Description and Resume text.');
+      if (!jd) {
+        showError('Please provide a Job Description.');
+        return;
+      }
+      if (!file || file.type !== 'application/pdf') {
+        showError('Please upload a valid PDF resume.');
         return;
       }
 
@@ -62,10 +72,11 @@
       btn.innerText = 'Analyzing...';
 
       try {
-        const analysis = analyzeResume(jd, resume);
+        const resumeText = await extractTextFromPDF(file);
+        const analysis = analyzeResume(jd, resumeText);
         renderResults(analysis);
       } catch (error) {
-        showError('Analysis failed. Please try again.');
+        showError('Failed to process PDF. Please try again.');
         console.error(error);
       }
 
@@ -73,40 +84,62 @@
       btn.innerText = 'Analyze Candidate';
     });
 
-    function analyzeResume(jobDescription, resumeText) {
-      // Simple AI-inspired analysis (rule-based with keyword matching)
-      // In a real app, replace with an LLM API call (e.g., to xAI or OpenAI)
+    async function extractTextFromPDF(file) {
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      let text = '';
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const content = await page.getTextContent();
+        text += content.items.map(item => item.str).join(' ') + '\n';
+      }
+      return text;
+    }
 
+    function analyzeResume(jobDescription, resumeText) {
       const jdLower = jobDescription.toLowerCase();
       const resumeLower = resumeText.toLowerCase();
 
-      // Extract keywords from JD (basic parsing)
       const jdSkills = extractSkills(jdLower);
       const resumeSkills = extractSkills(resumeLower);
 
-      // Calculate match score (0-100) based on skill overlap and experience
       const matchedSkills = jdSkills.filter(skill => resumeSkills.includes(skill));
-      const skillScore = (matchedSkills.length / jdSkills.length) * 60; // 60% weight on skills
-      const experienceScore = extractExperience(resumeLower) >= 3 ? 30 : 15; // 30% weight on experience (assume 3+ years needed)
-      const relevanceScore = calculateRelevance(jdLower, resumeLower) * 10; // 10% weight on overall relevance
+      const skillScore = (matchedSkills.length / jdSkills.length) * 60;
+      const experienceScore = extractExperience(resumeLower) >= 3 ? 30 : 15;
+      const relevanceScore = calculateRelevance(jdLower, resumeLower) * 10;
       const score = Math.min(100, Math.round(skillScore + experienceScore + relevanceScore));
 
-      // Strengths and Gaps
-      const strengths = matchedSkills.slice(0, 5); // Top 5 matches
-      const gaps = jdSkills.filter(skill => !resumeSkills.includes(skill)).slice(0, 5); // Top 5 missing
+      const strengths = matchedSkills.slice(0, 5);
+      const gaps = jdSkills.filter(skill => !resumeSkills.includes(skill)).slice(0, 5);
 
-      // Summary and Action
       let summary = '';
       let action = '';
+      let reasons = [];
+
       if (score >= 80) {
         summary = 'Excellent match with strong alignment in skills and experience.';
         action = 'Interview';
+        reasons = [
+          'High skill overlap with job requirements.',
+          'Sufficient experience level meets or exceeds expectations.',
+          'Overall relevance indicates a strong fit for the role.'
+        ];
       } else if (score >= 60) {
         summary = 'Good potential, but some gaps in required skills.';
         action = 'Consider for Interview';
+        reasons = [
+          'Moderate skill alignment, with room for growth.',
+          'Experience is adequate but could benefit from more depth.',
+          'Potential to bridge gaps through training or additional qualifications.'
+        ];
       } else {
         summary = 'Moderate match; significant gaps may require training.';
         action = 'Reject or Hold';
+        reasons = [
+          'Key skills are missing, such as: ' + gaps.slice(0, 3).join(', ') + (gaps.length > 3 ? ', and others' : '') + '.',
+          'Experience level is below the required threshold (less than 3 years detected).',
+          'Low overall relevance suggests the candidate may not be ready without substantial upskilling.'
+        ];
       }
 
       return {
@@ -114,24 +147,22 @@
         summary,
         strengths,
         gaps,
-        recommended_action: action
+        recommended_action: action,
+        reasons
       };
     }
 
     function extractSkills(text) {
-      // Basic skill extraction (expand with a real NLP library)
       const commonSkills = ['python', 'javascript', 'java', 'aws', 'docker', 'kubernetes', 'sql', 'api', 'react', 'node.js', 'machine learning', 'data analysis'];
       return commonSkills.filter(skill => text.includes(skill));
     }
 
     function extractExperience(text) {
-      // Rough experience extraction (looks for years)
       const match = text.match(/(\d+)\+?\s*years?/i);
       return match ? parseInt(match[1]) : 0;
     }
 
     function calculateRelevance(jd, resume) {
-      // Simple relevance score based on word overlap
       const jdWords = jd.split(/\s+/);
       const resumeWords = resume.split(/\s+/);
       const overlap = jdWords.filter(word => resumeWords.includes(word)).length;
@@ -142,6 +173,14 @@
       document.getElementById('score').innerText = data.score + '/100';
       document.getElementById('summary').innerText = data.summary;
       document.getElementById('action').innerText = data.recommended_action;
+
+      const reasonsUl = document.getElementById('reasons');
+      reasonsUl.innerHTML = '';
+      data.reasons.forEach(r => {
+        const li = document.createElement('li');
+        li.innerText = r;
+        reasonsUl.appendChild(li);
+      });
 
       const strengthsUl = document.getElementById('strengths');
       strengthsUl.innerHTML = '';
